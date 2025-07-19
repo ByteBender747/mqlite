@@ -9,6 +9,7 @@
  * 
  */
 
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -30,6 +31,7 @@
 
 struct socket_context {
     int handle;
+    struct mqtt_client* client;
 };
 
 static int create_tcp_client(const char* ipaddr, uint16_t port, int* sh)
@@ -108,6 +110,9 @@ static int open_conn(struct mqtt_client* client, const char* addr)
     }
     struct socket_context* ctx = (struct socket_context*)client->context;
     int result = create_tcp_client(addr, MQTT_PORT, &ctx->handle);
+    if (SUCCESSFUL(result)) {
+        client->net.connected = true;
+    }
     return result;
 }
 
@@ -121,6 +126,8 @@ static int close_conn(struct mqtt_client* client)
     if (close(ctx->handle) == -1) {
         return ERROR_HW_FAILURE;
     }
+    client->net.connected = false;
+
     return OK;
 }
 
@@ -203,4 +210,5 @@ void mqtt_assign_net_api(struct mqtt_client* client)
     client->net.send = socket_send;
     client->net.recv = socket_recv;
     client->context = &ctx;
+    ctx.client = client;
 }

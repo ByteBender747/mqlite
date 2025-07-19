@@ -115,7 +115,7 @@ static char* unpack_string(struct mqtt_client* stat)
     char* string = NULL;
     int len = unpack_word(stat);
     if (len > 0) {
-        char *string = malloc(len + 1);
+        string = malloc(len + 1);
         assert(string);
         for (int i = 0; i < len; ++i) {
             string[i] = (char) unpack_byte(stat);
@@ -215,6 +215,11 @@ void WEAK mqtt_publish_acknowledged(struct mqtt_client* stat, uint16_t packet_id
 }
 
 void WEAK mqtt_publish_completed(struct mqtt_client* stat, uint16_t packet_id, uint8_t reason_code)
+{
+    /* Can be overloaded by user code */
+}
+
+void WEAK mqtt_connected(struct mqtt_client* stat)
 {
     /* Can be overloaded by user code */
 }
@@ -1423,6 +1428,7 @@ static int process_connack(struct mqtt_client *stat)
     if (SUCCESSFUL(result)) {
         stat->connected = true;
         stat->expected_ptypes |= BIT(DISCONNECT) | BIT(PUBLISH);
+        mqtt_connected(stat);
     }
     return result;
 }
@@ -2482,6 +2488,23 @@ static int process_packet(struct mqtt_client *stat, mqtt_packet_type type,
 /*                                                                                               */
 /*************************************************************************************************/
 
+char* mqtt_blob_to_string(const struct mqtt_blob* blob)
+{
+    if (!blob || !blob->data || blob->len == 0) {
+        return NULL;
+    }
+
+    char* str = malloc(blob->len + 1);
+    if (!str) {
+        return NULL;
+    }
+
+    memcpy(str, blob->data, blob->len);
+    str[blob->len] = '\0';
+
+    return str;
+}
+
 int mqtt_process_packet(struct mqtt_client *stat, void* data, uint32_t len)
 {
     if (data && len) {
@@ -2667,6 +2690,11 @@ int mqtt_connect(struct mqtt_client* stat, uint16_t keep_alive, uint32_t session
         if (FAILED(result)) {
             stat->net.free_send_buf(stat, &stat->outp);
             return result;
+        }
+
+        // For async net APIs we may not connected here
+        if (!stat->net.connected) {
+            return STATUS_PENDING;
         }
 
         // Send the packet

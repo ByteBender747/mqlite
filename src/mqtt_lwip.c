@@ -9,7 +9,6 @@
  * 
  */
 
-#include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 
 #include "lwip/pbuf.h"
@@ -18,6 +17,7 @@
 #include "status.h"
 #include "mqtt.h"
 #include "logging.h"
+#include <stdbool.h>
 
 #define MAX_BUFFER_LEN  4096
 
@@ -27,7 +27,7 @@ struct socket_context {
     ip_addr_t remote_addr;
     char buffer[MAX_BUFFER_LEN];
     uint16_t send_len;
-    bool connected;
+    bool connecting;
     int mqtt_proc_state;
 };
 
@@ -39,7 +39,8 @@ static err_t tcp_client_connected(void *arg, struct tcp_pcb *tpcb, err_t err)
         return err;
     }
     if (state) {
-        state->connected = true;
+        state->client->net.connected = true;
+        state->connecting = false;
         LOG_DEBUG("LwIP: TCP connected");
     } else {
         LOG_ERROR("LwIP: missing arg!");
@@ -65,6 +66,9 @@ static err_t tcp_client_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
         LOG_DEBUG("LwIP: tcp recv data=0x%p, len=%d", p->payload, p->len);
         #endif
         state->mqtt_proc_state = mqtt_process_packet(state->client, p->payload, p->tot_len);
+        if (FAILED(state->mqtt_proc_state)) {
+            LOG_ERROR("mqtt_process_packet() returned: %d", state->mqtt_proc_state);
+        }
         tcp_recved(tpcb, p->tot_len);
     }
     pbuf_free(p);
@@ -114,7 +118,7 @@ static int free_send_buf(struct mqtt_client* client, struct mqtt_pbuf* buf)
 static int open_conn(struct mqtt_client* client, const char* addr)
 {
     int result = STATUS_SUCCESS;
-    struct socket_context* ctx;
+    struct socket_context* ctx = NULL;
 
     if (!client) {
         return ERROR_NULL_REFERENCE;
@@ -127,7 +131,7 @@ static int open_conn(struct mqtt_client* client, const char* addr)
         return ERROR_NULL_REFERENCE;
     }
 
-    if (!ctx->connected) {
+    if (!ctx->client->net.connected && !ctx->connecting) {
         ip4addr_aton(addr, &ctx->remote_addr);
         if (!ctx->tcp_pcb) {
             ctx->tcp_pcb = tcp_new_ip_type(IP_GET_TYPE(&ctx.remote_addr));
@@ -140,10 +144,12 @@ static int open_conn(struct mqtt_client* client, const char* addr)
         tcp_err(ctx->tcp_pcb, tcp_client_err);
         LOG_INFO("LwIP: connecting to host %s", addr);
         cyw43_arch_lwip_begin();
-        err_t err;
-        if ((err = tcp_connect(ctx->tcp_pcb, &ctx->remote_addr, MQTT_PORT, tcp_client_connected)) != ERR_OK) {
+        err_t err = tcp_connect(ctx->tcp_pcb, &ctx->remote_addr, MQTT_PORT, tcp_client_connected);
+        if (err != ERR_OK) {
             LOG_ERROR("LwIP: tcp_connect() returned: %d", err);
             result = ERROR_HOST_UNAVAILABLE;
+        } else {
+            ctx->connecting = true;
         }
         cyw43_arch_lwip_end();
     }
@@ -163,12 +169,12 @@ static int close_conn(struct mqtt_client* client)
         return ERROR_NULL_REFERENCE;
     }
 
-    if (state->connected) {
+    if (state->client->net.connected) {
         tcp_recv(state->tcp_pcb, NULL);
         tcp_err(state->tcp_pcb, NULL);
         tcp_arg(state->tcp_pcb, NULL);
         tcp_close(state->tcp_pcb);
-        state->connected = false;
+        state->client->net.connected = false;
         state->tcp_pcb = NULL;
         LOG_DEBUG("LwIP: TCP connection closed");
     }
@@ -181,15 +187,15 @@ static int socket_send(struct mqtt_client* client, struct mqtt_pbuf* buf)
     if (client) {
         struct socket_context* state = (struct socket_context*) client->context;
         if (state) {
-            if (!state->connected)  {
+            if (!state->client->net.connected)  {
                 return ERROR_NOT_CONNECTED;
             }
             cyw43_arch_lwip_begin();
-            err_t err;
             #ifdef MQTT_LWIP_VERBOSE
             LOG_DEBUG("LwIP: tcp send data=0x%p, len=%d", buf->payload, buf->len);
             #endif
-            if ((err = tcp_write(state->tcp_pcb, buf->payload, buf->len, TCP_WRITE_FLAG_COPY)) != ERR_OK) {
+            err_t err = tcp_write(state->tcp_pcb, buf->payload, buf->len, TCP_WRITE_FLAG_COPY);
+            if (err != ERR_OK) {
                 LOG_ERROR("LwIP: tcp_write() returned: %d", err);
                 return ERROR_SW_FAILURE;
             }

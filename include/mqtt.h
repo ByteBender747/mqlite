@@ -112,6 +112,13 @@ static inline struct mqtt_pub_packet mqtt_pub_packet(const char *topic,
 /*************************************************************************************************/
 
 /**
+ * @brief Convert mqtt_blob to a null-terminated string
+ * @param blob Pointer to the mqtt_blob structure
+ * @return Dynamically allocated string (caller must free) or NULL on error
+ */
+char* mqtt_blob_to_string(const struct mqtt_blob* blob);
+
+/**
  * @brief Create a new MQTT client instance
  * 
  * Allocates and initializes a new MQTT client structure with the specified broker address.

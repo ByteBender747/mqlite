@@ -32,6 +32,7 @@ struct mqtt_blob {
 };
 
 struct mqtt_net_api {
+    bool connected;
     int (*open_conn)(struct mqtt_client*, const char*);
     int (*close_conn)(struct mqtt_client*);
     int (*alloc_send_buf)(struct mqtt_client*, struct mqtt_pbuf*, uint32_t);
