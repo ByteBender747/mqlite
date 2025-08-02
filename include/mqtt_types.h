@@ -103,6 +103,7 @@ struct mqtt_client {
         int user_properties_count;
         const char* auth_method;
         struct mqtt_blob auth_data;
+        bool deferred;
     } connect;
 
     struct {
@@ -225,7 +226,7 @@ struct mqtt_client {
     } received_publish;
 
     void *context;
-    char broker_addr[16];
+    char *broker_addr;
     bool connected;
     uint8_t* pout;
     uint8_t* pin;

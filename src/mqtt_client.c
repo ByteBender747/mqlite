@@ -125,6 +125,25 @@ static char* unpack_string(struct mqtt_client* stat)
     return string;
 }
 
+static char* string_copy(const char* source)
+{
+    if (source == NULL) {
+        return NULL;
+    }
+
+    size_t len = strlen(source);
+    char* copy = malloc(len + 1);
+
+    if (copy == NULL) {
+        return NULL; // Memory allocation failed
+    }
+
+    // Copy the string to the allocated memory
+    strcpy(copy, source);
+
+    return copy;
+}
+
 static void pack_variable_size(struct mqtt_client* stat, uint32_t size)
 {
     do {
@@ -2632,6 +2651,12 @@ void mqtt_free_client_strings(struct mqtt_client* stat)
         free(stat->unsuback.reason_codes);
         stat->unsuback.reason_codes = NULL;
     }
+
+    // Free the broker address
+    if (stat->broker_addr) {
+        free(stat->broker_addr);
+        stat->broker_addr = NULL;
+    }
 }
 
 void mqtt_free_client(struct mqtt_client** stat)
@@ -2646,7 +2671,7 @@ void mqtt_free_client(struct mqtt_client** stat)
 struct mqtt_client* mqtt_create_client(const char* broker_addr)
 {
     struct mqtt_client* stat = (struct mqtt_client*) calloc(1, sizeof(struct mqtt_client));
-    strncpy(stat->broker_addr, broker_addr, sizeof(stat->broker_addr));
+    stat->broker_addr = string_copy(broker_addr);
     mqtt_assign_net_api(stat);
     assert(stat->net.alloc_send_buf);
     assert(stat->net.free_send_buf);
@@ -2692,9 +2717,10 @@ int mqtt_connect(struct mqtt_client* stat, uint16_t keep_alive, uint32_t session
             return result;
         }
 
-        // For async net APIs we may not connected here
+        // For async net APIs we may not connected here. 
+        // In that case we prepare the connect packet and send it later
         if (!stat->net.connected) {
-            return STATUS_PENDING;
+            stat->connect.deferred = true;
         }
 
         // Send the packet
@@ -2706,10 +2732,12 @@ int mqtt_connect(struct mqtt_client* stat, uint16_t keep_alive, uint32_t session
         }
 
         // Free send buffer
-        result = stat->net.free_send_buf(stat, &stat->outp);
-        if (FAILED(result)) {
-            stat->net.close_conn(stat);
-            return result;
+        if (result != STATUS_PENDING) {
+            result = stat->net.free_send_buf(stat, &stat->outp);
+            if (FAILED(result)) {
+                stat->net.close_conn(stat);
+                return result;
+            }
         }
 
         stat->expected_ptypes |= BIT(CONNACK);

@@ -78,7 +78,7 @@ static inline void mqtt_set_basic_auth(struct mqtt_client *stat, const char *use
  */
 static inline bool mqtt_is_connected(struct mqtt_client *stat)
 {
-    return stat->connected;
+    return stat && stat->connected;
 }
 
 /**

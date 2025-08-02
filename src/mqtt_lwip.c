@@ -4,9 +4,9 @@
  * @brief MQLite network stack driver for lwIP
  * @version 0.1
  * @date 2025-07-12
- * 
+ *
  * @copyright Copyright (c) 2025
- * 
+ *
  */
 
 #include "pico/cyw43_arch.h"
@@ -17,6 +17,7 @@
 #include "status.h"
 #include "mqtt.h"
 #include "logging.h"
+#include <lwip/err.h>
 #include <stdbool.h>
 
 #define MAX_BUFFER_LEN  4096
@@ -31,7 +32,7 @@ struct socket_context {
     int mqtt_proc_state;
 };
 
-static err_t tcp_client_connected(void *arg, struct tcp_pcb *tpcb, err_t err) 
+static err_t tcp_client_connected(void *arg, struct tcp_pcb *tpcb, err_t err)
 {
     struct socket_context* state = (struct socket_context*) arg;
     if (err != ERR_OK) {
@@ -42,6 +43,15 @@ static err_t tcp_client_connected(void *arg, struct tcp_pcb *tpcb, err_t err)
         state->client->net.connected = true;
         state->connecting = false;
         LOG_DEBUG("LwIP: TCP connected");
+        if (state->client->connect.deferred) {
+            int result = state->client->net.send(state->client, &state->client->outp);
+            state->client->net.free_send_buf(state->client, &state->client->outp);
+            if (FAILED(result)) {
+                state->client->net.close_conn(state->client);
+                return ERR_CONN;
+            }
+            state->client->connect.deferred = false;
+        }
     } else {
         LOG_ERROR("LwIP: missing arg!");
         return -1;
@@ -49,7 +59,7 @@ static err_t tcp_client_connected(void *arg, struct tcp_pcb *tpcb, err_t err)
     return ERR_OK;
 }
 
-static err_t tcp_client_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) 
+static err_t tcp_client_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
     struct socket_context* state = (struct socket_context*) arg;
     if (!p) {
@@ -62,9 +72,9 @@ static err_t tcp_client_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
     // cyw43_arch_lwip_begin IS needed
     cyw43_arch_lwip_check();
     if (p->tot_len > 0) {
-        #ifdef MQTT_LWIP_VERBOSE
+#ifdef MQTT_LWIP_VERBOSE
         LOG_DEBUG("LwIP: tcp recv data=0x%p, len=%d", p->payload, p->len);
-        #endif
+#endif
         state->mqtt_proc_state = mqtt_process_packet(state->client, p->payload, p->tot_len);
         if (FAILED(state->mqtt_proc_state)) {
             LOG_ERROR("mqtt_process_packet() returned: %d", state->mqtt_proc_state);
@@ -153,7 +163,7 @@ static int open_conn(struct mqtt_client* client, const char* addr)
         }
         cyw43_arch_lwip_end();
     }
-    
+
     return result;
 }
 
@@ -178,7 +188,7 @@ static int close_conn(struct mqtt_client* client)
         state->tcp_pcb = NULL;
         LOG_DEBUG("LwIP: TCP connection closed");
     }
-    
+
     return OK;
 }
 
@@ -188,12 +198,12 @@ static int socket_send(struct mqtt_client* client, struct mqtt_pbuf* buf)
         struct socket_context* state = (struct socket_context*) client->context;
         if (state) {
             if (!state->client->net.connected)  {
-                return ERROR_NOT_CONNECTED;
+                return state->client->connect.deferred ? STATUS_PENDING : ERROR_NOT_CONNECTED;
             }
             cyw43_arch_lwip_begin();
-            #ifdef MQTT_LWIP_VERBOSE
+#ifdef MQTT_LWIP_VERBOSE
             LOG_DEBUG("LwIP: tcp send data=0x%p, len=%d", buf->payload, buf->len);
-            #endif
+#endif
             err_t err = tcp_write(state->tcp_pcb, buf->payload, buf->len, TCP_WRITE_FLAG_COPY);
             if (err != ERR_OK) {
                 LOG_ERROR("LwIP: tcp_write() returned: %d", err);
